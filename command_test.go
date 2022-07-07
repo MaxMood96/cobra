@@ -1723,6 +1723,38 @@ func TestFlagErrorFunc(t *testing.T) {
 	}
 }
 
+func TestFlagErrorFuncHelp(t *testing.T) {
+	c := &Command{Use: "c", Run: emptyRun}
+	c.PersistentFlags().Bool("help", false, "help for c")
+	c.SetFlagErrorFunc(func(_ *Command, err error) error {
+		return fmt.Errorf("wrap error: %w", err)
+	})
+
+	out, err := executeCommand(c, "--help")
+	if err != nil {
+		t.Errorf("--help should not fail: %v", err)
+	}
+
+	expected := `Usage:
+  c [flags]
+
+Flags:
+      --help   help for c
+`
+	if out != expected {
+		t.Errorf("Expected: %v, got: %v", expected, out)
+	}
+
+	out, err = executeCommand(c, "-h")
+	if err != nil {
+		t.Errorf("-h should not fail: %v", err)
+	}
+
+	if out != expected {
+		t.Errorf("Expected: %v, got: %v", expected, out)
+	}
+}
+
 // TestSortedFlags checks,
 // if cmd.LocalFlags() is unsorted when cmd.Flags().SortFlags set to false.
 // Related to https://github.com/spf13/cobra/issues/404.
@@ -2057,4 +2089,107 @@ func TestFParseErrWhitelistSiblingCommand(t *testing.T) {
 		t.Error("expected unknown flag error")
 	}
 	checkStringContains(t, output, "unknown flag: --unknown")
+}
+
+func TestSetContext(t *testing.T) {
+	type key struct{}
+	val := "foobar"
+	root := &Command{
+		Use: "root",
+		Run: func(cmd *Command, args []string) {
+			key := cmd.Context().Value(key{})
+			got, ok := key.(string)
+			if !ok {
+				t.Error("key not found in context")
+			}
+			if got != val {
+				t.Errorf("Expected value: \n %v\nGot:\n %v\n", val, got)
+			}
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), key{}, val)
+	root.SetContext(ctx)
+	err := root.Execute()
+	if err != nil {
+		t.Error(err)
+	}
+}
+
+func TestSetContextPreRun(t *testing.T) {
+	type key struct{}
+	val := "barr"
+	root := &Command{
+		Use: "root",
+		PreRun: func(cmd *Command, args []string) {
+			ctx := context.WithValue(cmd.Context(), key{}, val)
+			cmd.SetContext(ctx)
+		},
+		Run: func(cmd *Command, args []string) {
+			val := cmd.Context().Value(key{})
+			got, ok := val.(string)
+			if !ok {
+				t.Error("key not found in context")
+			}
+			if got != val {
+				t.Errorf("Expected value: \n %v\nGot:\n %v\n", val, got)
+			}
+		},
+	}
+	err := root.Execute()
+	if err != nil {
+		t.Error(err)
+	}
+}
+
+func TestSetContextPreRunOverwrite(t *testing.T) {
+	type key struct{}
+	val := "blah"
+	root := &Command{
+		Use: "root",
+		Run: func(cmd *Command, args []string) {
+			key := cmd.Context().Value(key{})
+			_, ok := key.(string)
+			if ok {
+				t.Error("key found in context when not expected")
+			}
+		},
+	}
+	ctx := context.WithValue(context.Background(), key{}, val)
+	root.SetContext(ctx)
+	err := root.ExecuteContext(context.Background())
+	if err != nil {
+		t.Error(err)
+	}
+}
+
+func TestSetContextPersistentPreRun(t *testing.T) {
+	type key struct{}
+	val := "barbar"
+	root := &Command{
+		Use: "root",
+		PersistentPreRun: func(cmd *Command, args []string) {
+			ctx := context.WithValue(cmd.Context(), key{}, val)
+			cmd.SetContext(ctx)
+		},
+	}
+	child := &Command{
+		Use: "child",
+		Run: func(cmd *Command, args []string) {
+			key := cmd.Context().Value(key{})
+			got, ok := key.(string)
+			if !ok {
+				t.Error("key not found in context")
+			}
+			if got != val {
+				t.Errorf("Expected value: \n %v\nGot:\n %v\n", val, got)
+			}
+		},
+	}
+	root.AddCommand(child)
+	root.SetArgs([]string{"child"})
+	err := root.Execute()
+	if err != nil {
+		t.Error(err)
+	}
 }

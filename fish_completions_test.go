@@ -2,6 +2,9 @@ package cobra
 
 import (
 	"bytes"
+	"fmt"
+	"log"
+	"os"
 	"testing"
 )
 
@@ -66,4 +69,70 @@ func TestProgWithColon(t *testing.T) {
 	// The command name should not have replaced the ':'
 	check(t, output, "-c root:colon")
 	checkOmit(t, output, "-c root_colon")
+}
+
+func TestFishCompletionNoActiveHelp(t *testing.T) {
+	c := &Command{Use: "c", Run: emptyRun}
+
+	buf := new(bytes.Buffer)
+	assertNoErr(t, c.GenFishCompletion(buf, true))
+	output := buf.String()
+
+	// check that active help is being disabled
+	activeHelpVar := activeHelpEnvVar(c.Name())
+	check(t, output, fmt.Sprintf("%s=0", activeHelpVar))
+}
+
+func TestGenFishCompletionFile(t *testing.T) {
+	err := os.Mkdir("./tmp", 0755)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+
+	defer os.RemoveAll("./tmp")
+
+	rootCmd := &Command{Use: "root", Args: NoArgs, Run: emptyRun}
+	child := &Command{
+		Use:               "child",
+		ValidArgsFunction: validArgsFunc,
+		Run:               emptyRun,
+	}
+	rootCmd.AddCommand(child)
+
+	assertNoErr(t, rootCmd.GenFishCompletionFile("./tmp/test", false))
+}
+
+func TestFailGenFishCompletionFile(t *testing.T) {
+	err := os.Mkdir("./tmp", 0755)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+
+	defer os.RemoveAll("./tmp")
+
+	f, _ := os.OpenFile("./tmp/test", os.O_CREATE, 0400)
+	defer f.Close()
+
+	rootCmd := &Command{Use: "root", Args: NoArgs, Run: emptyRun}
+	child := &Command{
+		Use:               "child",
+		ValidArgsFunction: validArgsFunc,
+		Run:               emptyRun,
+	}
+	rootCmd.AddCommand(child)
+
+	got := rootCmd.GenFishCompletionFile("./tmp/test", false)
+	if got == nil {
+		t.Error("should raise permission denied error")
+	}
+
+	if os.Getenv("MSYSTEM") == "MINGW64" {
+		if got.Error() != "open ./tmp/test: Access is denied." {
+			t.Errorf("got: %s, want: %s", got.Error(), "open ./tmp/test: Access is denied.")
+		}
+	} else {
+		if got.Error() != "open ./tmp/test: permission denied" {
+			t.Errorf("got: %s, want: %s", got.Error(), "open ./tmp/test: permission denied")
+		}
+	}
 }
